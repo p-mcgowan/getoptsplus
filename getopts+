@@ -1,0 +1,155 @@
+#!/bin/bash
+#/bin/bash
+
+OPTIND=1
+optargs_global="$@"
+separated=false
+
+# Converts arg into something easier to handle in case statement
+separate_valids() {
+  long_opts=$(echo $optstring |grep -o "\-[a-zA-Z0-9-]\{1,\}:*" |sed 's/\([^,]\{1,\}\),/\1/g')
+  longs=$(echo $long_opts |sed 's/[: ]\{1,\}/|/g')
+  short_opts=$(echo $optstring |sed 's/-[^,$]\{1,\}//g')
+  shorts=$(echo $short_opts |sed 's/[:,]//g' |sed 's/\([^$]\)/\1|/g')
+  shorts=$(echo $shorts |sed 's/^|\||$//g')
+  if [ "$longs" != "" ]; then
+    longs='|'$longs
+  fi
+  globall='+('$shorts$longs')'
+  #stop_timer separate_valids
+  echo $longs $shorts
+  echo $globall
+  separated=true
+}
+
+# Counts the number of colons (:) following an option
+count_expected_args() {
+  local vname="$1"
+  local opt=$2
+  if [ "${opt:0:1}" == "-" ]; then
+    opt=${opt:1}
+    countparams=$(echo $long_opts |grep -o "$opt[^a-zA-Z0-9,]\{1,\}" |sed 's/[^:]*//g')
+  else
+    countparams=$(echo $short_opts |grep -o "$opt[^a-zA-Z0-9,]\{1,\}" |sed 's/[^:]*//g')
+  fi
+  if [ "$countparams" == "" ]; then
+    eval $vname=0
+  else
+    eval $vname=\${#countparams}
+  fi
+}
+
+# shiftopts shifts varoutput varinput
+# Shifts shift_in 'shifts' times and puts result in vname
+shiftopts() {
+  local shifts="$1"
+  local vname="$2"
+  shift $((2 + $shifts))
+  shift_in="$@"
+  eval $vname=\$shift_in
+}
+
+# Returns the first arg of the args passed in
+get_first() {
+  local vname=$1
+  shift
+  eval $vname="$1"
+}
+
+# Main processing
+getopts+() {
+  shopt -s extglob
+  usage="\
+Usage: getopts+ optstring varname [args]
+try 'getopts+' -h or --help for more info"
+
+  helpusage="\
+optsring is a list of options (eg f,A:,v-verbose,x::)
+varname is the case option, ? for unknown opt, or : for expecting param
+OPTARG contains argument(s)
+OPTIND is the current arg index"
+
+  # Check input
+  if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
+    echo "$helpusage"
+    exit 1
+  elif [ $# -lt 2 ]; then
+    echo "$usage"
+    OPTIND=1
+    exit 1
+  fi
+
+  OPTARG=
+
+  optstring="$1"
+  if [ "${optstring:0:1}" == ":" ]; then
+    OPTVERBOSE=false
+    optstring="${optstring:1}"
+  else
+    OPTVERBOSE=true
+  fi
+
+  varname="$2"
+  #if [ invalid ]; then
+  #  echo $(basename $0): \`$varname\': not a valid identifier 1>&2
+  #fi
+  shift 2
+  if [ "$1" != "" ]; then
+    optargs="$@"
+  else
+    optargs="$optargs_global"
+  fi
+
+  $separated || separate_valids
+  shiftopts $((OPTIND - 1)) optargs $optargs
+  get_first first_opt $optargs
+  first_opt=${first_opt:1}
+  case $first_opt in
+    $globall)
+      (( OPTIND++ ))
+      count_expected_args paramcount $first_opt
+      for (( i=0; i<$paramcount; ++i )); do
+        shiftopts 1 optargs $optargs
+        (( OPTIND++ ))
+        #if [ "$optargs" == "" ]; then
+        if [ "${optargs:0:1}" == "-" ]; then
+          # fewer params than expected or done
+          if $OPTVERBOSE; then
+            eval $varname='?'
+            OPTARG=
+            echo "-$(basename $0): $first_opt expects arg" 1>&2
+            OPTIND=1
+          else
+            eval $varname=':'
+            OPTARG=$first_opt
+          fi
+          return 0
+        fi
+        get_first opt_param $optargs
+        if [ "$first_non_opt" == "" ]; then
+          first_non_opt=$OPTIND
+        fi
+        OPTARG=$OPTARG" $opt_param"
+      done
+      eval $varname=\$first_opt
+      return 0;;
+    *)
+      # Invalid option or end of args
+      (( OPTIND++ ))
+      eval $varname='?'
+      if [ "$first_opt" == "" ] || [ "$first_opt" == "-" ]; then
+        #if [ "$first_non_opt" != ""  ]; then
+        #  OPTIND=first_non_opt
+        #fi
+        return 2
+      fi
+      if $OPTVERBOSE; then
+        OPTARG=
+        echo "-$(basename $0): invalid option -- $first_opt" 1>&2
+      else
+        OPTARG="$first_opt"
+      fi
+      return 0;;
+  esac
+}
+
